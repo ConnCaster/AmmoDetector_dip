@@ -1,0 +1,598 @@
+{
+  "question": "Вы нашли пуговицу? yes или no",
+  "answers":
+  {
+    "yes":
+    {
+      "question": "Какого она размера? 10 или 14",
+      "answers":
+      {
+        "10":
+        {
+          "statement": [1941, 1942, 1943, 1944, 1945],
+          "question": "Около какой части тела: ШЕЯ(neck), ГРУДЬ(chest), КАРМАН(pocket), РУКИ(hands), ПЛЕЧИ(shoulders)?",
+          "answers":
+          {
+            "neck" :
+            {
+              "statement": [1944, 1945],
+              "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+              "answers":
+              {
+                "no":
+                {
+                  "statement": [1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                },
+                "RANK":
+                {
+                  "statement": [1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                }
+              }
+            },
+            "chest":
+            {
+              "statement": [1941, 1942, 1943,1944, 1945],
+              "question": "Сколько пуговиц удалось обнаружить в районе РУК: 2, 4 или other(в том числе не удалось обнаружить)?",
+              "answers":
+              {
+                "2":
+                {
+                  "statement": [1941, 1942, 1943],
+                  "question": "Удалось ли обнаружить пуговицы в районе ПЛЕЧЕЙ: yes или no?",
+                  "answers":
+                  {
+                    "yes":
+                    {
+                      "statement": [1941, 1942, 1943],
+                      "question": "Какого размера найденные пуговицы? 10 или 14",
+                      "answers":
+                      {
+                        "14":
+                        {
+                          "statement": [1943],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        },
+                        "10":
+                        {
+                          "statement": [1941, 1942],
+                          "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                          "answers":
+                          {
+                            "QUIT": "RETURN_STATEMENT",
+                            "PATH": "RECOGNITION_STATEMENT"
+                          }
+                        }
+                      }
+                    },
+                    "no":
+                    {
+                      "statement": [1941, 1942],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "4":
+                {
+                  "statement": [1944, 1945],
+                  "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                  "answers":
+                  {
+                    "no":
+                    {
+                      "statement": [1943],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    },
+                    "RANK":
+                    {
+                      "statement": [1944, 1945],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "other":
+                {
+                  "statement": [1941, 1942, 1943, 1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                }
+              }
+            },
+            "pocket":
+            {
+              "statement": [1941, 1942, 1943, 1944, 1945],
+              "question": "Сколько пуговиц удалось обнаружить в районе РУК: 2, 4 или other(в том числе не удалось обнаружить)?",
+              "answers":
+              {
+                "2":
+                {
+                  "statement": [1941, 1942, 1943],
+                  "question": "Удалось ли обнаружить пуговицы в районе ПЛЕЧЕЙ: yes или no?",
+                  "answers":
+                  {
+                    "yes":
+                    {
+                      "statement": [1941, 1942, 1943],
+                      "question": "Какого размера найденные пуговицы? 10 или 14",
+                      "answers":
+                      {
+                        "14":
+                        {
+                          "statement": [1943],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        },
+                        "10":
+                        {
+                          "statement": [1941, 1942],
+                          "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                          "answers":
+                          {
+                            "QUIT": "RETURN_STATEMENT",
+                            "PATH": "RECOGNITION_STATEMENT"
+                          }
+                        }
+                      }
+                    },
+                    "no":
+                    {
+                      "statement": [1941, 1942],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "4":
+                {
+                  "statement": [1944, 1945],
+                  "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                  "answers":
+                  {
+                    "no":
+                    {
+                      "statement": [1943],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    },
+                    "RANK":
+                    {
+                      "statement": [1944, 1945],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "other":
+                {
+                  "statement": [1941, 1942, 1943, 1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                }
+              }
+            },
+            "hands":
+            {
+              "statement": [1941, 1942, 1943, 1944, 1945],
+              "question": "Сколько пуговиц удалось обнаружить в районе РУК: 2, 4 или other(в том числе не удалось обнаружить)?",
+              "answers":
+              {
+                "2":
+                {
+                  "statement": [1941, 1942, 1943],
+                  "question": "Удалось ли обнаружить пуговицы в районе ПЛЕЧЕЙ: yes или no?",
+                  "answers":
+                  {
+                    "yes":
+                    {
+                      "statement": [1941, 1942, 1943],
+                      "question": "Какого размера найденные пуговицы? 10 или 14",
+                      "answers":
+                      {
+                        "14":
+                        {
+                          "statement": [1943],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        },
+                        "10":
+                        {
+                          "statement": [1941, 1942],
+                          "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                          "answers":
+                          {
+                            "QUIT": "RETURN_STATEMENT",
+                            "PATH": "RECOGNITION_STATEMENT"
+                          }
+                        }
+                      }
+                    },
+                    "no":
+                    {
+                      "statement": [1941, 1942],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "4":
+                {
+                  "statement": [1944, 1945],
+                  "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                  "answers":
+                  {
+                    "no":
+                    {
+                      "statement": [1943],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    },
+                    "RANK":
+                    {
+                      "statement": [1944, 1945],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                },
+                "other":
+                {
+                  "statement": [1941, 1942, 1943, 1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                }
+              }
+            },
+            "shoulders" :
+            {
+              "statement": [1941, 1942, 1943, 1944, 1945],
+              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+              "answers":
+              {
+                "QUIT": "RETURN_STATEMENT",
+                "PATH": "RECOGNITION_STATEMENT"
+              }
+            }
+          }
+        },
+        "14":
+        {
+          "statement": [1943, 1944, 1945],
+          "question": "Около какой части тела: ПЛЕЧИ(shoulders) или other(другое)?",
+          "answers":
+          {
+            "shoulders":
+            {
+              "statement": [1943, 1944, 1945],
+              "question": "Удалось ли обнаружить пуговицы в районе рук? yes или no",
+              "answers":
+              {
+                "yes":
+                {
+                  "statement": [1943, 1944, 1945],
+                  "question": "Какого она размера? 10 или 14",
+                  "answers":
+                  {
+                    "10":
+                    {
+                      "statement": [1943, 1944, 1945],
+                      "question": "Сколько пуговиц 10 мм в районе рук удалось обнаружить? 2, 4 или other",
+                      "answers":
+                      {
+                        "2":
+                        {
+                          "statement": [1943],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        },
+                        "4":
+                        {
+                          "statement": [1943, 1944, 1945],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943, 1944, 1945],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943, 1944, 1945],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        },
+                        "other":
+                        {
+                          "statement": [1943, 1944, 1945],
+                          "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                          "answers":
+                          {
+                            "no":
+                            {
+                              "statement": [1943, 1944, 1945],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            },
+                            "RANK":
+                            {
+                              "statement": [1943, 1944, 1945],
+                              "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                              "answers":
+                              {
+                                "QUIT": "RETURN_STATEMENT",
+                                "PATH": "RECOGNITION_STATEMENT"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "14":
+                    {
+                      "statement": [1943, 1944, 1945],
+                      "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                      "answers":
+                      {
+                        "no":
+                        {
+                          "statement": [1943, 1944, 1945],
+                          "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                          "answers":
+                          {
+                            "QUIT": "RETURN_STATEMENT",
+                            "PATH": "RECOGNITION_STATEMENT"
+                          }
+                        },
+                        "RANK":
+                        {
+                          "statement": [1943, 1944, 1945],
+                          "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                          "answers":
+                          {
+                            "QUIT": "RETURN_STATEMENT",
+                            "PATH": "RECOGNITION_STATEMENT"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "no":
+                {
+                  "statement": [1943, 1944, 1945],
+                  "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+                  "answers":
+                  {
+                    "no":
+                    {
+                      "statement": [1943, 1944, 1945],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    },
+                    "RANK":
+                    {
+                      "statement": [1943, 1944, 1945],
+                      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                      "answers":
+                      {
+                        "QUIT": "RETURN_STATEMENT",
+                        "PATH": "RECOGNITION_STATEMENT"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "other":
+            {
+              "statement": [1943, 1944, 1945],
+              "question": "Удалось определить звание? Ответьте либо NO, либо введи звание",
+              "answers":
+              {
+                "no":
+                {
+                  "statement": [1943, 1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                },
+                "RANK":
+                {
+                  "statement": [1943, 1944, 1945],
+                  "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+                  "answers":
+                  {
+                    "QUIT": "RETURN_STATEMENT",
+                    "PATH": "RECOGNITION_STATEMENT"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "no": {
+      "statement": [1941, 1942, 1943, 1944, 1945],
+      "question": "Отправьте путь к файлу с изображением на распознавание или введите слово QUIT",
+      "answers":
+      {
+        "QUIT": "RETURN_STATEMENT",
+        "PATH": "RECOGNITION_STATEMENT"
+      }
+    }
+  }
+}
