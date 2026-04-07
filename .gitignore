@@ -1,2 +1,6 @@
 cmake-build-debug/
 .idea/
+data_for_tests/
+deps/
+main_tf.cpp
+CMakeLists_tf.txt
