@@ -1,15 +1,29 @@
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "json.h"
+#include "nlohmann/json.hpp"
+#include <opencv2/opencv.hpp>
+
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/interpreter.h"
+#include "tensorflow/lite/kernels/register.h"
+#include "tensorflow/lite/model.h"
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 // ------------------------ Утилиты ------------------------
 
@@ -50,7 +64,11 @@ std::string StatementToString(const json& statement) {
             if (i > 0) {
                 oss << ", ";
             }
-            oss << statement[i];
+            if (statement[i].is_string()) {
+                oss << statement[i].get<std::string>();
+            } else {
+                oss << statement[i].dump();
+            }
         }
         oss << ']';
         return oss.str();
@@ -61,6 +79,91 @@ std::string StatementToString(const json& statement) {
     }
 
     return JsonToCompactString(statement);
+}
+
+std::optional<std::string> FindObjectKeyCaseInsensitive(const json& object, const std::string& input) {
+    if (!object.is_object()) {
+        return std::nullopt;
+    }
+
+    const std::string normalized = Normalize(input);
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        if (Normalize(it.key()) == normalized) {
+            return it.key();
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::vector<int> JsonToIntVector(const json& value) {
+    std::vector<int> result;
+
+    if (!value.is_array()) {
+        return result;
+    }
+
+    for (const auto& item : value) {
+        if (item.is_number_integer()) {
+            result.push_back(item.get<int>());
+        } else if (item.is_string()) {
+            try {
+                result.push_back(std::stoi(item.get<std::string>()));
+            } catch (...) {
+            }
+        }
+    }
+
+    return result;
+}
+
+std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+
+    left.erase(std::unique(left.begin(), left.end()), left.end());
+    right.erase(std::unique(right.begin(), right.end()), right.end());
+
+    std::vector<int> result;
+    std::set_intersection(
+        left.begin(), left.end(),
+        right.begin(), right.end(),
+        std::back_inserter(result)
+    );
+
+    return result;
+}
+
+std::string JoinInts(const std::vector<int>& values) {
+    if (values.empty()) {
+        return "[]";
+    }
+
+    std::ostringstream oss;
+    oss << '[';
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            oss << ", ";
+        }
+        oss << values[i];
+    }
+    oss << ']';
+    return oss.str();
+}
+
+std::string JoinStrings(const std::vector<std::string>& values) {
+    if (values.empty()) {
+        return "";
+    }
+
+    std::ostringstream oss;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            oss << ", ";
+        }
+        oss << values[i];
+    }
+    return oss.str();
 }
 
 }  // namespace util
@@ -137,59 +240,6 @@ public:
     static std::string BuildStatementText(const json& statement) {
         return "Решение: " + util::StatementToString(statement);
     }
-
-    static std::vector<std::string> BuildRecognitionInfo(const std::string& id, const json& entry) {
-        std::vector<std::string> lines;
-        lines.push_back("Распознанный объект: " + id);
-
-        if (entry.contains("where")) {
-            lines.push_back("where:");
-            const json& where = entry.at("where");
-            if (where.is_object()) {
-                for (auto it = where.begin(); it != where.end(); ++it) {
-                    lines.push_back("  " + it.key() + ": " + util::StatementToString(it.value()));
-                }
-            } else {
-                lines.push_back("  " + util::JsonToCompactString(where));
-            }
-        }
-
-        if (entry.contains("size")) {
-            lines.push_back("size: " + FormatAny(entry.at("size")));
-        }
-
-        if (entry.contains("description")) {
-            lines.push_back("description: " + FormatAny(entry.at("description")));
-        }
-
-        return lines;
-    }
-
-private:
-    static std::string FormatAny(const json& value) {
-        if (value.is_string()) {
-            return value.get<std::string>();
-        }
-
-        if (value.is_array()) {
-            std::ostringstream oss;
-            oss << '[';
-            for (std::size_t i = 0; i < value.size(); ++i) {
-                if (i > 0) {
-                    oss << ", ";
-                }
-                oss << FormatAny(value[i]);
-            }
-            oss << ']';
-            return oss.str();
-        }
-
-        if (value.is_object()) {
-            return value.dump();
-        }
-
-        return value.dump();
-    }
 };
 
 // ------------------------ Разрешение ответов ------------------------
@@ -204,17 +254,14 @@ public:
         const std::string trimmed = util::Trim(userInput);
         const std::string normalized = util::Normalize(userInput);
 
-        // 1. Точное совпадение
         if (answers.contains(trimmed)) {
             return trimmed;
         }
 
-        // 2. Поиск по ключам без учета регистра
         if (auto exactCi = FindKeyCaseInsensitive(answers, normalized)) {
             return exactCi;
         }
 
-        // 3. Специальные ключи
         if (normalized == "quit") {
             if (auto quitKey = FindKeyCaseInsensitive(answers, "quit")) {
                 return quitKey;
@@ -227,7 +274,6 @@ public:
             }
         }
 
-        // 4. Любой непустой ввод можно интерпретировать как RANK, если такой ключ есть
         if (!normalized.empty() && normalized != "quit" && normalized != "path") {
             if (auto rankKey = FindKeyCaseInsensitive(answers, "rank")) {
                 return rankKey;
@@ -248,14 +294,346 @@ private:
     }
 };
 
-// ------------------------ Сессия "распознавания" ------------------------
+// ------------------------ TFLite: метаданные и инференс ------------------------
+
+struct Meta {
+    std::vector<std::string> class_names;
+    std::string base_model;
+    std::string preprocess;
+    int img_h = 224;
+    int img_w = 224;
+};
+
+Meta LoadMeta(const std::string& jsonPath) {
+    std::ifstream in(jsonPath);
+    if (!in.is_open()) {
+        throw std::runtime_error("Не удалось открыть classes.json: " + jsonPath);
+    }
+
+    json j;
+    in >> j;
+
+    Meta meta;
+
+    if (!j.contains("class_names") || !j.at("class_names").is_array()) {
+        throw std::runtime_error("classes.json: отсутствует массив class_names");
+    }
+
+    for (const auto& item : j.at("class_names")) {
+        if (item.is_string()) {
+            meta.class_names.push_back(item.get<std::string>());
+        } else if (item.is_number_integer()) {
+            meta.class_names.push_back(std::to_string(item.get<int>()));
+        } else {
+            throw std::runtime_error("classes.json: элементы class_names должны быть строками или целыми числами");
+        }
+    }
+
+    if (j.contains("base_model") && j.at("base_model").is_string()) {
+        meta.base_model = j.at("base_model").get<std::string>();
+    }
+
+    if (j.contains("preprocess") && j.at("preprocess").is_string()) {
+        meta.preprocess = j.at("preprocess").get<std::string>();
+    }
+
+    if (j.contains("img_height") && j.at("img_height").is_number_integer()) {
+        meta.img_h = j.at("img_height").get<int>();
+    }
+
+    if (j.contains("img_width") && j.at("img_width").is_number_integer()) {
+        meta.img_w = j.at("img_width").get<int>();
+    }
+
+    meta.base_model = util::ToLower(meta.base_model);
+    meta.preprocess = util::ToLower(meta.preprocess);
+
+    return meta;
+}
+
+cv::Mat ResizeWithPadBgr(const cv::Mat& imgBgr, int targetW, int targetH) {
+    if (imgBgr.empty()) {
+        throw std::runtime_error("Пустое изображение для ResizeWithPadBgr");
+    }
+
+    const double scale = std::min(
+        static_cast<double>(targetW) / static_cast<double>(imgBgr.cols),
+        static_cast<double>(targetH) / static_cast<double>(imgBgr.rows)
+    );
+
+    const int newW = std::max(1, static_cast<int>(std::round(imgBgr.cols * scale)));
+    const int newH = std::max(1, static_cast<int>(std::round(imgBgr.rows * scale)));
+
+    cv::Mat resized;
+    cv::resize(imgBgr, resized, cv::Size(newW, newH), 0, 0, cv::INTER_AREA);
+
+    cv::Mat canvas(targetH, targetW, CV_8UC3, cv::Scalar(0, 0, 0));
+    const int x = (targetW - newW) / 2;
+    const int y = (targetH - newH) / 2;
+    resized.copyTo(canvas(cv::Rect(x, y, newW, newH)));
+
+    return canvas;
+}
+
+static const float IMAGENET_MEAN_B = 103.939f;
+static const float IMAGENET_MEAN_G = 116.779f;
+static const float IMAGENET_MEAN_R = 123.680f;
+
+void PreprocessVggResnetInplaceBgr(cv::Mat& bgr) {
+    bgr.convertTo(bgr, CV_32FC3);
+
+    std::vector<cv::Mat> channels(3);
+    cv::split(bgr, channels);
+
+    channels[0] = channels[0] - IMAGENET_MEAN_B;
+    channels[1] = channels[1] - IMAGENET_MEAN_G;
+    channels[2] = channels[2] - IMAGENET_MEAN_R;
+
+    cv::merge(channels, bgr);
+}
+
+void PreprocessEfficientnetInplaceRgb(cv::Mat& bgr) {
+    cv::Mat rgb;
+    cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+    rgb.convertTo(rgb, CV_32FC3, 1.0 / 127.5, -1.0);
+    bgr = rgb;
+}
+
+enum class PrepKind {
+    VGG16,
+    RESNET50,
+    EFFICIENTNET
+};
+
+PrepKind SelectPrep(const std::string& marker) {
+    if (marker == "vgg16") {
+        return PrepKind::VGG16;
+    }
+    if (marker == "resnet50") {
+        return PrepKind::RESNET50;
+    }
+    if (marker == "efficientnet") {
+        return PrepKind::EFFICIENTNET;
+    }
+    return PrepKind::VGG16;
+}
+
+std::unique_ptr<tflite::Interpreter> LoadTFLite(
+    const std::string& modelPath,
+    std::unique_ptr<tflite::FlatBufferModel>& modelHolder
+) {
+    modelHolder = tflite::FlatBufferModel::BuildFromFile(modelPath.c_str());
+    if (!modelHolder) {
+        throw std::runtime_error("Не удалось загрузить .tflite модель: " + modelPath);
+    }
+
+    tflite::ops::builtin::BuiltinOpResolver resolver;
+    std::unique_ptr<tflite::Interpreter> interpreter;
+
+    tflite::InterpreterBuilder(*modelHolder, resolver)(&interpreter);
+    if (!interpreter) {
+        throw std::runtime_error("Не удалось создать интерпретатор TFLite");
+    }
+
+    interpreter->SetNumThreads(2);
+
+    if (interpreter->AllocateTensors() != kTfLiteOk) {
+        throw std::runtime_error("AllocateTensors() failed");
+    }
+
+    return interpreter;
+}
+
+std::vector<std::pair<int, float>> TopK(const std::vector<float>& probs, int k) {
+    std::vector<std::pair<int, float>> idxProb;
+    idxProb.reserve(probs.size());
+
+    for (int i = 0; i < static_cast<int>(probs.size()); ++i) {
+        idxProb.emplace_back(i, probs[i]);
+    }
+
+    if (idxProb.empty()) {
+        return {};
+    }
+
+    if (k > static_cast<int>(idxProb.size())) {
+        k = static_cast<int>(idxProb.size());
+    }
+
+    std::partial_sort(
+        idxProb.begin(),
+        idxProb.begin() + k,
+        idxProb.end(),
+        [](const auto& left, const auto& right) {
+            return left.second > right.second;
+        }
+    );
+
+    idxProb.resize(k);
+    return idxProb;
+}
+
+struct Pred {
+    std::string path;
+    std::vector<float> probs;
+    std::vector<std::pair<int, float>> top3;
+};
+
+Pred PredictOne(
+    tflite::Interpreter* interpreter,
+    const std::string& imagePath,
+    const Meta& meta,
+    PrepKind prepKind
+) {
+    cv::Mat imgBgr = cv::imread(imagePath, cv::IMREAD_COLOR);
+    if (imgBgr.empty()) {
+        throw std::runtime_error("Не удалось прочитать изображение: " + imagePath);
+    }
+
+    cv::Mat padded = ResizeWithPadBgr(imgBgr, meta.img_w, meta.img_h);
+
+    switch (prepKind) {
+        case PrepKind::VGG16:
+        case PrepKind::RESNET50:
+            PreprocessVggResnetInplaceBgr(padded);
+            break;
+        case PrepKind::EFFICIENTNET:
+            PreprocessEfficientnetInplaceRgb(padded);
+            break;
+        default:
+            PreprocessVggResnetInplaceBgr(padded);
+            break;
+    }
+
+    if (!padded.isContinuous()) {
+        padded = padded.clone();
+    }
+
+    TfLiteTensor* inputTensor = interpreter->tensor(interpreter->inputs()[0]);
+    if (inputTensor == nullptr) {
+        throw std::runtime_error("Не удалось получить входной тензор");
+    }
+
+    if (inputTensor->type != kTfLiteFloat32) {
+        throw std::runtime_error("Поддерживается только float32 входной тензор");
+    }
+
+    if (inputTensor->dims == nullptr || inputTensor->dims->size != 4) {
+        throw std::runtime_error("Ожидается входной тензор формы [1, H, W, 3]");
+    }
+
+    const int batch = inputTensor->dims->data[0];
+    const int height = inputTensor->dims->data[1];
+    const int width = inputTensor->dims->data[2];
+    const int channels = inputTensor->dims->data[3];
+
+    if (batch != 1 || height != meta.img_h || width != meta.img_w || channels != 3) {
+        throw std::runtime_error("Размер входного тензора модели не совпадает с метаданными classes.json");
+    }
+
+    float* input = interpreter->typed_input_tensor<float>(0);
+    const std::size_t bytes = static_cast<std::size_t>(meta.img_w) *
+                              static_cast<std::size_t>(meta.img_h) * 3 * sizeof(float);
+
+    if (padded.type() != CV_32FC3) {
+        throw std::runtime_error("Внутренняя ошибка: ожидался CV_32FC3 после препроцессинга");
+    }
+
+    std::memcpy(input, padded.data, bytes);
+
+    if (interpreter->Invoke() != kTfLiteOk) {
+        throw std::runtime_error("Invoke() failed");
+    }
+
+    const int outIdx = interpreter->outputs()[0];
+    TfLiteTensor* outTensor = interpreter->tensor(outIdx);
+    if (outTensor == nullptr) {
+        throw std::runtime_error("Не удалось получить выходной тензор");
+    }
+
+    if (outTensor->type != kTfLiteFloat32) {
+        throw std::runtime_error("Поддерживается только float32 выходной тензор");
+    }
+
+    int numClasses = 0;
+    if (outTensor->dims != nullptr) {
+        if (outTensor->dims->size == 2 && outTensor->dims->data[0] == 1) {
+            numClasses = outTensor->dims->data[1];
+        } else if (outTensor->dims->size == 1) {
+            numClasses = outTensor->dims->data[0];
+        }
+    }
+
+    if (numClasses <= 0) {
+        throw std::runtime_error("Неожиданная форма выходного тензора");
+    }
+
+    const float* out = interpreter->typed_output_tensor<float>(0);
+    std::vector<float> probs(static_cast<std::size_t>(numClasses));
+
+    for (int i = 0; i < numClasses; ++i) {
+        probs[static_cast<std::size_t>(i)] = out[i];
+    }
+
+    Pred pred;
+    pred.path = imagePath;
+    pred.probs = std::move(probs);
+    pred.top3 = TopK(pred.probs, 3);
+
+    return pred;
+}
+
+std::string LabelByIndex(const Meta& meta, int idx) {
+    if (idx >= 0 && idx < static_cast<int>(meta.class_names.size())) {
+        return meta.class_names[static_cast<std::size_t>(idx)];
+    }
+    return "class_" + std::to_string(idx);
+}
+
+// ------------------------ Обёртка над распознаванием ------------------------
+
+class ImageRecognizer {
+public:
+    ImageRecognizer(const std::string& modelPath, const std::string& classesJsonPath)
+        : meta_(LoadMeta(classesJsonPath)) {
+        const std::string marker = !meta_.preprocess.empty() ? meta_.preprocess : meta_.base_model;
+        prepKind_ = SelectPrep(marker);
+        interpreter_ = LoadTFLite(modelPath, modelHolder_);
+    }
+
+    Pred Predict(const std::string& imagePath) {
+        return PredictOne(interpreter_.get(), imagePath, meta_, prepKind_);
+    }
+
+    const Meta& GetMeta() const {
+        return meta_;
+    }
+
+    std::string GetTop1ClassId(const Pred& pred) const {
+        if (pred.top3.empty()) {
+            throw std::runtime_error("Модель не вернула ни одного класса.");
+        }
+
+        return LabelByIndex(meta_, pred.top3.front().first);
+    }
+
+private:
+    Meta meta_;
+    PrepKind prepKind_ = PrepKind::VGG16;
+    std::unique_ptr<tflite::FlatBufferModel> modelHolder_;
+    std::unique_ptr<tflite::Interpreter> interpreter_;
+};
+
+// ------------------------ Сессия распознавания ------------------------
 
 class RecognitionSession {
 public:
-    RecognitionSession(const RecognitionCatalog& catalog, ITextUI& ui)
-        : catalog_(catalog), ui_(ui) {}
+    RecognitionSession(const RecognitionCatalog& catalog, ImageRecognizer& recognizer, ITextUI& ui)
+        : catalog_(catalog),
+          recognizer_(recognizer),
+          ui_(ui) {}
 
-    void Run(const json& savedStatement, const std::string& questionText) const {
+    void Run(const json& savedStatement, const std::string& questionText) {
         ui_.PrintLine(questionText);
 
         while (true) {
@@ -267,23 +645,191 @@ public:
                 return;
             }
 
-            if (catalog_.HasId(input)) {
-                ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
-
-                const json& entry = catalog_.GetById(input);
-                const auto lines = OutputFormatter::BuildRecognitionInfo(input, entry);
-                for (const auto& line : lines) {
-                    ui_.PrintLine(line);
-                }
-                return;
+            if (input.empty()) {
+                ui_.PrintLine("Путь к файлу не должен быть пустым. Введите путь к изображению или QUIT.");
+                continue;
             }
 
-            ui_.PrintLine("Некорректный ввод. Введите существующий номер из recognition.json или QUIT.");
+            try {
+                const Pred prediction = recognizer_.Predict(input);
+                PrintTop3(prediction);
+
+                const std::string classId = recognizer_.GetTop1ClassId(prediction);
+                ui_.PrintLine("Наиболее вероятный класс: " + classId);
+
+                if (!catalog_.HasId(classId)) {
+                    throw std::runtime_error(
+                        "Класс '" + classId + "' отсутствует в recognition.json. "
+                        "Проверьте соответствие class_names и ключей recognition.json."
+                    );
+                }
+
+                const json& entry = catalog_.GetById(classId);
+                ProcessRecognitionResult(savedStatement, classId, entry);
+                return;
+            } catch (const std::exception& ex) {
+                ui_.PrintLine(std::string("Ошибка распознавания: ") + ex.what());
+                ui_.PrintLine("Попробуйте снова ввести корректный путь к изображению или QUIT.");
+            }
         }
     }
 
 private:
+    void PrintTop3(const Pred& prediction) {
+        ui_.PrintLine("Топ-3 наиболее вероятных класса:");
+
+        for (int rank = 0; rank < static_cast<int>(prediction.top3.size()); ++rank) {
+            const int classIndex = prediction.top3[static_cast<std::size_t>(rank)].first;
+            const float prob = prediction.top3[static_cast<std::size_t>(rank)].second;
+            const std::string label = LabelByIndex(recognizer_.GetMeta(), classIndex);
+
+            std::ostringstream oss;
+            oss << "  #" << (rank + 1) << ": "
+                << label << " ("
+                << std::fixed << std::setprecision(2)
+                << prob * 100.0f << "%)";
+            ui_.PrintLine(oss.str());
+        }
+    }
+
+    void ProcessRecognitionResult(const json& savedStatement, const std::string& classId, const json& entry) {
+        if (!entry.contains("where") || !entry.at("where").is_object()) {
+            throw std::runtime_error("В recognition.json у объекта '" + classId + "' отсутствует корректный раздел where.");
+        }
+
+        const json& where = entry.at("where");
+        const std::vector<int> statementYears = util::JsonToIntVector(savedStatement);
+
+        if (where.size() == 1) {
+            const auto it = where.begin();
+            PrintSingleWhereResult(savedStatement, classId, it.key(), it.value(), statementYears, entry);
+            return;
+        }
+
+        std::vector<std::string> options;
+        for (auto it = where.begin(); it != where.end(); ++it) {
+            options.push_back(it.key());
+        }
+
+        ui_.PrintLine(
+            "У распознанного объекта несколько возможных мест обнаружения. "
+            "Укажите одно из них: " + util::JoinStrings(options)
+        );
+
+        while (true) {
+            const std::string userWhere = util::Trim(ui_.ReadLine("> "));
+            const auto resolvedKey = util::FindObjectKeyCaseInsensitive(where, userWhere);
+
+            if (!resolvedKey.has_value()) {
+                ui_.PrintLine("Некорректный ввод. Доступные варианты: " + util::JoinStrings(options));
+                continue;
+            }
+
+            PrintMultiWhereResult(savedStatement, classId, *resolvedKey, where.at(*resolvedKey), entry);
+            return;
+        }
+    }
+
+    void PrintSingleWhereResult(
+    const json& savedStatement,
+    const std::string& classId,
+    const std::string& whereKey,
+    const json& yearsJson,
+    const std::vector<int>& /*statementYears*/,
+    const json& entry
+) {
+        const std::vector<int> whereYears = util::JsonToIntVector(yearsJson);
+
+        //ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
+        ui_.PrintLine("Распознанный объект: " + classId);
+        ui_.PrintLine("Место из recognition.json: " + whereKey);
+
+        PrintYearsBlock(savedStatement, whereYears);
+        PrintDetailedEntryInfo(entry);
+    }
+
+    void PrintMultiWhereResult(
+    const json& savedStatement,
+    const std::string& classId,
+    const std::string& selectedWhereKey,
+    const json& yearsJson,
+    const json& entry
+) {
+        const std::vector<int> whereYears = util::JsonToIntVector(yearsJson);
+
+        //ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
+        ui_.PrintLine("Распознанный объект: " + classId);
+        ui_.PrintLine("Выбранное место: " + selectedWhereKey);
+
+        PrintYearsBlock(savedStatement, whereYears);
+        PrintDetailedEntryInfo(entry);
+    }
+
+    std::string ExtractDescription(const json& entry) const {
+        if (!entry.contains("description")) {
+            return "отсутствует";
+        }
+
+        if (entry.at("description").is_string()) {
+            return entry.at("description").get<std::string>();
+        }
+
+        return entry.at("description").dump();
+    }
+
+    std::string ExtractStringField(const json& entry, const std::string& key) const {
+        if (!entry.contains(key)) {
+            return "отсутствует";
+        }
+
+        const json& value = entry.at(key);
+
+        if (value.is_string()) {
+            return value.get<std::string>();
+        }
+
+        if (value.is_array()) {
+            std::vector<std::string> parts;
+            for (const auto& item : value) {
+                if (item.is_string()) {
+                    parts.push_back(item.get<std::string>());
+                } else {
+                    parts.push_back(item.dump());
+                }
+            }
+            return util::JoinStrings(parts);
+        }
+
+        return value.dump();
+    }
+
+    void PrintDetailedEntryInfo(const json& entry) {
+        ui_.PrintLine("Размер: " + ExtractStringField(entry, "size"));
+        ui_.PrintLine("Описание: " + ExtractStringField(entry, "description"));
+        ui_.PrintLine("Возможные воинские звания: " + ExtractStringField(entry, "range"));
+    }
+
+    void PrintYearsBlock(
+        const json& savedStatement,
+        const std::vector<int>& whereYears
+    ) {
+        const std::vector<int> statementYears = util::JsonToIntVector(savedStatement);
+        std::vector<int> intersection = util::IntersectIntVectors(statementYears, whereYears);
+
+        ui_.PrintLine("Годы, полученные из информации о пуговицах: " + util::JoinInts(statementYears));
+        ui_.PrintLine("Годы, полученные из описания распознанного изображения: " + util::JoinInts(whereYears));
+        if (intersection.empty())
+        {
+            std::copy(statementYears.begin(), statementYears.end(), std::back_inserter(intersection));
+            std::copy(whereYears.begin(), whereYears.end(), std::back_inserter(intersection));
+            std::sort(intersection.begin(), intersection.end());
+        }
+        ui_.PrintLine("РЕШЕНИЕ: " + util::JoinInts(intersection));
+    }
+
+private:
     const RecognitionCatalog& catalog_;
+    ImageRecognizer& recognizer_;
     ITextUI& ui_;
 };
 
@@ -291,9 +837,9 @@ private:
 
 class DecisionTreeEngine {
 public:
-    DecisionTreeEngine(json treeRoot, const RecognitionCatalog& catalog, ITextUI& ui)
+    DecisionTreeEngine(json treeRoot, const RecognitionCatalog& catalog, ImageRecognizer& recognizer, ITextUI& ui)
         : treeRoot_(std::move(treeRoot)),
-          recognitionSession_(catalog, ui),
+          recognitionSession_(catalog, recognizer, ui),
           ui_(ui) {
         ValidateRoot();
     }
@@ -304,9 +850,6 @@ public:
         while (true) {
             EnsureNodeHasQuestionAndAnswers(*currentNode);
 
-            // Специальный режим:
-            // вопрос про "путь к файлу или QUIT",
-            // но фактически принимаем QUIT или цифру-ключ из recognition.json
             if (IsRecognitionLeafNode(*currentNode)) {
                 const json statement = ExtractStatement(*currentNode);
                 const std::string questionText = currentNode->at("question").get<std::string>();
@@ -401,22 +944,23 @@ private:
         }
 
         const json& answers = node.at("answers");
-
         bool hasQuit = false;
         bool hasPath = false;
 
         for (auto it = answers.begin(); it != answers.end(); ++it) {
             const std::string key = util::Normalize(it.key());
 
-            if (key == "quit" && it.value().is_string() &&
+            if (key == "quit" &&
+                it.value().is_string() &&
                 it.value().get<std::string>() == "RETURN_STATEMENT") {
                 hasQuit = true;
-                }
+            }
 
-            if (key == "path" && it.value().is_string() &&
+            if (key == "path" &&
+                it.value().is_string() &&
                 it.value().get<std::string>() == "RECOGNITION_STATEMENT") {
                 hasPath = true;
-                }
+            }
         }
 
         return hasQuit && hasPath;
@@ -428,363 +972,31 @@ private:
     ITextUI& ui_;
 };
 
-// ===================================================================
-
-#include <filesystem>
-#include <memory>
-#include <algorithm>
-#include <cstring>
-
-
-#include <opencv2/opencv.hpp>
-
-// JSON (header-only): https://github.com/nlohmann/json
-#include "nlohmann/json.hpp"
-
-// TFLite
-#include "tensorflow/lite/model.h"
-#include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/kernels/register.h"
-#include "tensorflow/lite/c/common.h"
-
-namespace fs = std::filesystem;
-
-// -------------------- Утилиты --------------------
-struct Meta {
-    std::vector<std::string> class_names;
-    std::string base_model;   // "vgg16" | "resnet50" | "efficientnet"
-    std::string preprocess;   // тот же маркер, что и base_model
-    int img_h = 224;
-    int img_w = 224;
-};
-
-Meta load_meta(const std::string& json_path) {
-    std::ifstream in(json_path);
-    if (!in) throw std::runtime_error("Не удалось открыть classes.json: " + json_path);
-    json j; in >> j;
-
-    Meta m;
-    if (!j.contains("class_names")) throw std::runtime_error("classes.json: нет поля class_names");
-    for (auto& v : j["class_names"]) m.class_names.push_back(v.get<std::string>());
-
-    if (j.contains("base_model"))  m.base_model  = j["base_model"].get<std::string>();
-    if (j.contains("preprocess"))  m.preprocess  = j["preprocess"].get<std::string>();
-    if (j.contains("img_height"))  m.img_h       = j["img_height"].get<int>();
-    if (j.contains("img_width"))   m.img_w       = j["img_width"].get<int>();
-
-    std::transform(m.preprocess.begin(), m.preprocess.end(), m.preprocess.begin(), ::tolower);
-    std::transform(m.base_model.begin(), m.base_model.end(), m.base_model.begin(), ::tolower);
-    return m;
-}
-
-std::vector<std::string> gather_images(const std::string& dir) {
-    std::vector<std::string> files;
-    for (auto& p : fs::recursive_directory_iterator(dir)) {
-        if (!p.is_regular_file()) continue;
-        auto ext = p.path().extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".webp") {
-            files.push_back(p.path().string());
-        }
-    }
-    return files;
-}
-
-// -------------------- resize_with_pad --------------------
-cv::Mat resize_with_pad_bgr(const cv::Mat& img_bgr, int target_w, int target_h) {
-    double scale = std::min(
-            static_cast<double>(target_w) / img_bgr.cols,
-            static_cast<double>(target_h) / img_bgr.rows
-    );
-    int new_w = std::max(1, static_cast<int>(std::round(img_bgr.cols * scale)));
-    int new_h = std::max(1, static_cast<int>(std::round(img_bgr.rows * scale)));
-
-    cv::Mat resized;
-    cv::resize(img_bgr, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_AREA);
-
-    cv::Mat canvas(target_h, target_w, CV_8UC3, cv::Scalar(0, 0, 0));
-    int x = (target_w - new_w) / 2;
-    int y = (target_h - new_h) / 2;
-    resized.copyTo(canvas(cv::Rect(x, y, new_w, new_h)));
-    return canvas;
-}
-
-// -------------------- Препроцессинги --------------------
-static const float IMAGENET_MEAN_B = 103.939f;
-static const float IMAGENET_MEAN_G = 116.779f;
-static const float IMAGENET_MEAN_R = 123.680f;
-
-// VGG16/ResNet50 (caffe-подобный): вход BGR float32, вычитание средних по каналам
-void preprocess_vgg_resnet_inplace_bgr(cv::Mat& bgr) {
-    bgr.convertTo(bgr, CV_32FC3);
-    std::vector<cv::Mat> ch(3);
-    cv::split(bgr, ch);
-    ch[0] = ch[0] - IMAGENET_MEAN_B;
-    ch[1] = ch[1] - IMAGENET_MEAN_G;
-    ch[2] = ch[2] - IMAGENET_MEAN_R;
-    cv::merge(ch, bgr);
-}
-
-// EfficientNet: RGB float32 в диапазоне [-1, 1]
-void preprocess_efficientnet_inplace_rgb(cv::Mat& bgr) {
-    cv::Mat rgb;
-    cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
-    rgb.convertTo(rgb, CV_32FC3, 1.0 / 127.5, -1.0); // x/127.5 - 1
-    bgr = rgb;
-}
-
-enum class PrepKind { VGG16, RESNET50, EFFICIENTNET };
-
-PrepKind select_prep(const std::string& marker) {
-    if (marker == "vgg16") return PrepKind::VGG16;
-    if (marker == "resnet50") return PrepKind::RESNET50;
-    if (marker == "efficientnet") return PrepKind::EFFICIENTNET;
-    return PrepKind::VGG16;
-}
-
-// -------------------- Загрузка модели TFLite --------------------
-std::unique_ptr<tflite::Interpreter> load_tflite(
-        const std::string& model_path,
-        std::unique_ptr<tflite::FlatBufferModel>& model_holder
-) {
-    model_holder = tflite::FlatBufferModel::BuildFromFile(model_path.c_str());
-    if (!model_holder) {
-        throw std::runtime_error("Не удалось загрузить .tflite модель: " + model_path);
-    }
-
-    tflite::ops::builtin::BuiltinOpResolver resolver;
-    std::unique_ptr<tflite::Interpreter> interpreter;
-    tflite::InterpreterBuilder(*model_holder, resolver)(&interpreter);
-    if (!interpreter) {
-        throw std::runtime_error("Не удалось создать интерпретатор TFLite");
-    }
-
-    interpreter->SetNumThreads(2);
-    if (interpreter->AllocateTensors() != kTfLiteOk) {
-        throw std::runtime_error("AllocateTensors() failed");
-    }
-    return interpreter;
-}
-
-// -------------------- Top-K утилита --------------------
-std::vector<std::pair<int, float>> top_k(const std::vector<float>& probs, int k) {
-    std::vector<std::pair<int, float>> idx_prob;
-    idx_prob.reserve(probs.size());
-    for (int i = 0; i < (int)probs.size(); ++i) idx_prob.emplace_back(i, probs[i]);
-
-    if (k > (int)idx_prob.size()) k = (int)idx_prob.size();
-    std::partial_sort(
-        idx_prob.begin(), idx_prob.begin() + k, idx_prob.end(),
-        [](const auto& a, const auto& b) { return a.second > b.second; }
-    );
-    idx_prob.resize(k);
-    return idx_prob;
-}
-
-// -------------------- Инференс одного изображения --------------------
-struct Pred {
-    std::string path;
-    std::vector<float> probs; // полный softmax
-    std::vector<std::pair<int, float>> top3; // (class_index, prob)
-};
-
-Pred predict_one(tflite::Interpreter* interp,
-                 const std::string& path,
-                 const Meta& meta,
-                 PrepKind prep_kind)
-{
-    cv::Mat img_bgr = cv::imread(path, cv::IMREAD_COLOR);
-    if (img_bgr.empty()) {
-        throw std::runtime_error("Не удалось прочитать изображение: " + path);
-    }
-
-    // 1) resize_with_pad -> (H,W)
-    cv::Mat padded = resize_with_pad_bgr(img_bgr, meta.img_w, meta.img_h);
-
-    // 2) препроцессинг на месте
-    switch (prep_kind) {
-        case PrepKind::VGG16:
-        case PrepKind::RESNET50:
-            preprocess_vgg_resnet_inplace_bgr(padded);
-            break;
-        case PrepKind::EFFICIENTNET:
-            preprocess_efficientnet_inplace_rgb(padded);
-            break;
-        default:
-            preprocess_vgg_resnet_inplace_bgr(padded);
-    }
-
-    // гарантируем непрерывность памяти перед memcpy
-    if (!padded.isContinuous()) padded = padded.clone();
-
-    // 3) записываем в входной тензор [1,H,W,3] (NHWC, float32)
-    float* input = interp->typed_input_tensor<float>(0);
-    const size_t bytes = static_cast<size_t>(meta.img_w) * meta.img_h * 3 * sizeof(float);
-
-    if (padded.type() != CV_32FC3) {
-        throw std::runtime_error("Внутренняя ошибка: ожидался CV_32FC3 после препроцессинга");
-    }
-    std::memcpy(input, padded.data, bytes);
-
-    // 4) run
-    if (interp->Invoke() != kTfLiteOk) {
-        throw std::runtime_error("Invoke() failed");
-    }
-
-    // 5) читаем выход softmax [1, NUM_CLASSES]
-    int out_idx = interp->outputs()[0];
-    TfLiteTensor* out_tensor = interp->tensor(out_idx);
-
-    if (out_tensor->type != kTfLiteFloat32) {
-        throw std::runtime_error("Выходной тензор не float32 (для quantized модели нужно отдельное чтение)");
-    }
-    if (out_tensor->dims->size != 2 || out_tensor->dims->data[0] != 1) {
-        throw std::runtime_error("Неожиданная форма выхода: ожидается [1, NUM_CLASSES]");
-    }
-
-    const float* out = interp->typed_output_tensor<float>(0);
-    int num_classes = out_tensor->dims->data[1];
-
-    std::vector<float> probs(num_classes);
-    for (int i = 0; i < num_classes; ++i) probs[i] = out[i];
-
-    Pred pred;
-    pred.path = path;
-    pred.probs = std::move(probs);
-    pred.top3 = top_k(pred.probs, 3);
-    return pred;
-}
-
-std::string label_by_index(const Meta& meta, int idx) {
-    if (idx >= 0 && idx < (int)meta.class_names.size()) return meta.class_names[idx];
-    return "class_" + std::to_string(idx);
-}
-
-void print_top3(const Meta& meta, const Pred& pr) {
-    for (int rank = 0; rank < (int)pr.top3.size(); ++rank) {
-        int cls = pr.top3[rank].first;
-        float p = pr.top3[rank].second;
-        std::cout << "  #" << (rank + 1) << ": "
-                  << label_by_index(meta, cls)
-                  << "  (" << std::fixed << std::setprecision(2) << p * 100.0f << "%)\n";
-    }
-}
-
-int run_tf()
-{
-    std::string model_path   = "/home/user/dir/programming/C++/Yaroslava/DIPLOM/data_for_tests/DIPLOM/models/model.tflite";
-    std::string classes_json = "/home/user/dir/programming/C++/Yaroslava/DIPLOM/data_for_tests/DIPLOM/classes.json";
-    bool batch_mode = false; // (argc >= 4);
-    std::string images_dir = batch_mode ? "" /*argv[3]*/ : "";
-
-    try {
-        Meta meta = load_meta(classes_json);
-        auto prep_kind = select_prep(!meta.preprocess.empty() ? meta.preprocess : meta.base_model);
-
-        std::unique_ptr<tflite::FlatBufferModel> model_holder;
-        auto interpreter = load_tflite(model_path, model_holder);
-
-        std::cout << "Модель: " << model_path << "\n";
-        std::cout << "Классов: " << meta.class_names.size() << "\n";
-        std::cout << "Препроцессинг: " << (meta.preprocess.empty() ? meta.base_model : meta.preprocess) << "\n";
-        std::cout << "Размер: " << meta.img_w << "x" << meta.img_h << "\n";
-        std::cout << "--------------------------------------------------\n";
-
-        if (batch_mode) {
-            auto images = gather_images(images_dir);
-            if (images.empty()) {
-                std::cout << "В директории нет изображений\n";
-                return 0;
-            }
-
-            std::cout << "Найдено " << images.size() << " изображений\n";
-            std::cout << "--------------------------------------------------\n";
-
-            for (const auto& p : images) {
-                auto pr = predict_one(interpreter.get(), p, meta, prep_kind);
-                std::cout << fs::path(p).filename().string() << "\n";
-                print_top3(meta, pr);
-                std::cout << "--------------------------------------------------\n";
-            }
-            return 0;
-        }
-
-        // -------- интерактивный режим: 3 изображения --------
-        std::vector<Pred> results;
-        results.reserve(3);
-
-        for (int i = 1; i <= 3; ++i) {
-            std::cout << "Введите путь к изображению #" << i << " (или 'q' для выхода):\n> ";
-            std::string path;
-            std::getline(std::cin, path);
-
-            if (path == "q" || path == "Q") {
-                std::cout << "Выход.\n";
-                // -------- сводка --------
-                std::cout << "\n==================== ИТОГИ (топ совпадений по каждой картинке) ====================\n";
-                for (size_t i = 0; i < results.size(); ++i) {
-                    std::cout << "Изображение #" << (i + 1) << ": " << results[i].path << "\n";
-                    print_top3(meta, results[i]);
-                    std::cout << "-------------------------------------------------------------------------\n";
-                }
-                return 0;
-            }
-            if (path.empty()) {
-                std::cout << "Пустой ввод — попробуйте ещё раз.\n";
-                --i;
-                continue;
-            }
-
-            try {
-                auto pr = predict_one(interpreter.get(), path, meta, prep_kind);
-                results.push_back(pr);
-
-                std::cout << "Результат для #" << i << ":\n";
-                print_top3(meta, pr);
-                std::cout << "--------------------------------------------------\n";
-            } catch (const std::exception& e) {
-                std::cout << "Ошибка: " << e.what() << "\n";
-                std::cout << "Попробуйте другой файл.\n";
-                --i;
-            }
-        }
-
-        // -------- сводка --------
-        std::cout << "\n==================== ИТОГИ (топ-3 по каждой картинке) ====================\n";
-        for (size_t i = 0; i < results.size(); ++i) {
-            std::cout << "Изображение #" << (i + 1) << ": " << results[i].path << "\n";
-            print_top3(meta, results[i]);
-            std::cout << "-------------------------------------------------------------------------\n";
-        }
-
-    } catch (const std::exception& ex) {
-        std::cerr << "Ошибка: " << ex.what() << "\n";
-        return 2;
-    }
-}
-
 // ------------------------ main ------------------------
 
 int main(int argc, char* argv[]) {
     try {
-        if (argc < 3) {
+        if (argc < 5) {
             std::cerr << "Использование:\n";
-            std::cerr << "  " << argv[0] << " <questions.json> <recognition.json>\n";
+            std::cerr << "  " << argv[0]
+                      << " <questions.json> <recognition.json> <model.tflite> <classes.json>\n";
             return 1;
         }
 
         const std::string questionsPath = argv[1];
         const std::string recognitionPath = argv[2];
+        const std::string modelPath = argv[3];
+        const std::string classesPath = argv[4];
 
         const json questionsTree = JsonFileLoader::LoadFromFile(questionsPath);
         const json recognitionJson = JsonFileLoader::LoadFromFile(recognitionPath);
 
         ConsoleUI ui;
         RecognitionCatalog catalog(recognitionJson);
-        DecisionTreeEngine engine(questionsTree, catalog, ui);
+        ImageRecognizer recognizer(modelPath, classesPath);
+        DecisionTreeEngine engine(questionsTree, catalog, recognizer, ui);
 
         engine.Run();
-        run_tf();
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Ошибка: " << ex.what() << '\n';
