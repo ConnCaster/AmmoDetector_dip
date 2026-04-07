@@ -49,38 +49,6 @@ std::string Normalize(const std::string& value) {
     return ToLower(Trim(value));
 }
 
-std::string JsonToCompactString(const json& value) {
-    if (value.is_string()) {
-        return value.get<std::string>();
-    }
-    return value.dump();
-}
-
-std::string StatementToString(const json& statement) {
-    if (statement.is_array()) {
-        std::ostringstream oss;
-        oss << '[';
-        for (std::size_t i = 0; i < statement.size(); ++i) {
-            if (i > 0) {
-                oss << ", ";
-            }
-            if (statement[i].is_string()) {
-                oss << statement[i].get<std::string>();
-            } else {
-                oss << statement[i].dump();
-            }
-        }
-        oss << ']';
-        return oss.str();
-    }
-
-    if (statement.is_null()) {
-        return "[]";
-    }
-
-    return JsonToCompactString(statement);
-}
-
 std::optional<std::string> FindObjectKeyCaseInsensitive(const json& object, const std::string& input) {
     if (!object.is_object()) {
         return std::nullopt;
@@ -117,6 +85,24 @@ std::vector<int> JsonToIntVector(const json& value) {
     return result;
 }
 
+std::vector<std::string> JsonToStringVector(const json& value) {
+    std::vector<std::string> result;
+
+    if (!value.is_array()) {
+        return result;
+    }
+
+    for (const auto& item : value) {
+        if (item.is_string()) {
+            result.push_back(item.get<std::string>());
+        } else {
+            result.push_back(item.dump());
+        }
+    }
+
+    return result;
+}
+
 std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> right) {
     std::sort(left.begin(), left.end());
     std::sort(right.begin(), right.end());
@@ -132,6 +118,13 @@ std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> rig
     );
 
     return result;
+}
+
+std::vector<int> MergeUniqueIntVectors(std::vector<int> left, const std::vector<int>& right) {
+    left.insert(left.end(), right.begin(), right.end());
+    std::sort(left.begin(), left.end());
+    left.erase(std::unique(left.begin(), left.end()), left.end());
+    return left;
 }
 
 std::string JoinInts(const std::vector<int>& values) {
@@ -167,6 +160,37 @@ std::string JoinStrings(const std::vector<std::string>& values) {
 }
 
 }  // namespace util
+
+// ------------------------ Результирующие структуры ------------------------
+
+struct TopPrediction {
+    std::string classId;
+    float probability = 0.0f;
+};
+
+struct DialogContext {
+    std::optional<std::string> enteredRank;
+};
+
+struct DecisionResult {
+    bool recognitionUsed = false;
+
+    std::optional<std::string> enteredRank;
+
+    std::string imagePath;
+    std::string recognizedObjectId;
+    std::string selectedWhere;
+
+    std::vector<int> yearsFromButtons;
+    std::vector<int> yearsFromRecognition;
+    std::vector<int> finalYears;
+
+    std::string size;
+    std::string description;
+    std::vector<std::string> possibleMilitaryRanks;
+
+    std::vector<TopPrediction> topPredictions;
+};
 
 // ------------------------ Интерфейс ввода/вывода ------------------------
 
@@ -233,54 +257,58 @@ private:
     json catalog_;
 };
 
-// ------------------------ Форматирование вывода ------------------------
-
-class OutputFormatter {
-public:
-    static std::string BuildStatementText(const json& statement) {
-        return "Решение: " + util::StatementToString(statement);
-    }
-};
-
 // ------------------------ Разрешение ответов ------------------------
 
 class AnswerResolver {
 public:
-    static std::optional<std::string> ResolveKey(const json& answers, const std::string& userInput) {
+    struct ResolveResult {
+        std::optional<std::string> resolvedKey;
+        std::optional<std::string> enteredRank;
+    };
+
+    static ResolveResult ResolveKey(const json& answers, const std::string& userInput) {
+        ResolveResult result;
+
         if (!answers.is_object()) {
-            return std::nullopt;
+            return result;
         }
 
         const std::string trimmed = util::Trim(userInput);
         const std::string normalized = util::Normalize(userInput);
 
         if (answers.contains(trimmed)) {
-            return trimmed;
+            result.resolvedKey = trimmed;
+            return result;
         }
 
         if (auto exactCi = FindKeyCaseInsensitive(answers, normalized)) {
-            return exactCi;
+            result.resolvedKey = exactCi;
+            return result;
         }
 
         if (normalized == "quit") {
             if (auto quitKey = FindKeyCaseInsensitive(answers, "quit")) {
-                return quitKey;
+                result.resolvedKey = quitKey;
+                return result;
             }
         }
 
         if (normalized == "path") {
             if (auto pathKey = FindKeyCaseInsensitive(answers, "path")) {
-                return pathKey;
+                result.resolvedKey = pathKey;
+                return result;
             }
         }
 
         if (!normalized.empty() && normalized != "quit" && normalized != "path") {
             if (auto rankKey = FindKeyCaseInsensitive(answers, "rank")) {
-                return rankKey;
+                result.resolvedKey = rankKey;
+                result.enteredRank = trimmed;
+                return result;
             }
         }
 
-        return std::nullopt;
+        return result;
     }
 
 private:
@@ -633,7 +661,11 @@ public:
           recognizer_(recognizer),
           ui_(ui) {}
 
-    void Run(const json& savedStatement, const std::string& questionText) {
+    DecisionResult Run(
+        const json& savedStatement,
+        const std::string& questionText,
+        const DialogContext& context
+    ) {
         ui_.PrintLine(questionText);
 
         while (true) {
@@ -641,8 +673,7 @@ public:
             const std::string normalized = util::Normalize(input);
 
             if (normalized == "quit") {
-                ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
-                return;
+                return BuildResultWithoutRecognition(savedStatement, context);
             }
 
             if (input.empty()) {
@@ -652,10 +683,7 @@ public:
 
             try {
                 const Pred prediction = recognizer_.Predict(input);
-                PrintTop3(prediction);
-
                 const std::string classId = recognizer_.GetTop1ClassId(prediction);
-                ui_.PrintLine("Наиболее вероятный класс: " + classId);
 
                 if (!catalog_.HasId(classId)) {
                     throw std::runtime_error(
@@ -665,8 +693,7 @@ public:
                 }
 
                 const json& entry = catalog_.GetById(classId);
-                ProcessRecognitionResult(savedStatement, classId, entry);
-                return;
+                return ProcessRecognitionResult(savedStatement, input, prediction, classId, entry, context);
             } catch (const std::exception& ex) {
                 ui_.PrintLine(std::string("Ошибка распознавания: ") + ex.what());
                 ui_.PrintLine("Попробуйте снова ввести корректный путь к изображению или QUIT.");
@@ -675,35 +702,32 @@ public:
     }
 
 private:
-    void PrintTop3(const Pred& prediction) {
-        ui_.PrintLine("Топ-3 наиболее вероятных класса:");
-
-        for (int rank = 0; rank < static_cast<int>(prediction.top3.size()); ++rank) {
-            const int classIndex = prediction.top3[static_cast<std::size_t>(rank)].first;
-            const float prob = prediction.top3[static_cast<std::size_t>(rank)].second;
-            const std::string label = LabelByIndex(recognizer_.GetMeta(), classIndex);
-
-            std::ostringstream oss;
-            oss << "  #" << (rank + 1) << ": "
-                << label << " ("
-                << std::fixed << std::setprecision(2)
-                << prob * 100.0f << "%)";
-            ui_.PrintLine(oss.str());
-        }
-    }
-
-    void ProcessRecognitionResult(const json& savedStatement, const std::string& classId, const json& entry) {
+    DecisionResult ProcessRecognitionResult(
+        const json& savedStatement,
+        const std::string& imagePath,
+        const Pred& prediction,
+        const std::string& classId,
+        const json& entry,
+        const DialogContext& context
+    ) {
         if (!entry.contains("where") || !entry.at("where").is_object()) {
             throw std::runtime_error("В recognition.json у объекта '" + classId + "' отсутствует корректный раздел where.");
         }
 
         const json& where = entry.at("where");
-        const std::vector<int> statementYears = util::JsonToIntVector(savedStatement);
 
         if (where.size() == 1) {
             const auto it = where.begin();
-            PrintSingleWhereResult(savedStatement, classId, it.key(), it.value(), statementYears, entry);
-            return;
+            return BuildRecognitionResult(
+                savedStatement,
+                imagePath,
+                prediction,
+                classId,
+                it.key(),
+                it.value(),
+                entry,
+                context
+            );
         }
 
         std::vector<std::string> options;
@@ -725,56 +749,68 @@ private:
                 continue;
             }
 
-            PrintMultiWhereResult(savedStatement, classId, *resolvedKey, where.at(*resolvedKey), entry);
-            return;
+            return BuildRecognitionResult(
+                savedStatement,
+                imagePath,
+                prediction,
+                classId,
+                *resolvedKey,
+                where.at(*resolvedKey),
+                entry,
+                context
+            );
         }
     }
 
-    void PrintSingleWhereResult(
-    const json& savedStatement,
-    const std::string& classId,
-    const std::string& whereKey,
-    const json& yearsJson,
-    const std::vector<int>& /*statementYears*/,
-    const json& entry
-) {
-        const std::vector<int> whereYears = util::JsonToIntVector(yearsJson);
+    DecisionResult BuildRecognitionResult(
+        const json& savedStatement,
+        const std::string& imagePath,
+        const Pred& prediction,
+        const std::string& classId,
+        const std::string& whereKey,
+        const json& yearsJson,
+        const json& entry,
+        const DialogContext& context
+    ) {
+        DecisionResult result;
+        result.recognitionUsed = true;
+        result.enteredRank = context.enteredRank;
+        result.imagePath = imagePath;
+        result.recognizedObjectId = classId;
+        result.selectedWhere = whereKey;
 
-        //ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
-        ui_.PrintLine("Распознанный объект: " + classId);
-        ui_.PrintLine("Место из recognition.json: " + whereKey);
+        result.yearsFromButtons = util::JsonToIntVector(savedStatement);
+        result.yearsFromRecognition = util::JsonToIntVector(yearsJson);
 
-        PrintYearsBlock(savedStatement, whereYears);
-        PrintDetailedEntryInfo(entry);
-    }
-
-    void PrintMultiWhereResult(
-    const json& savedStatement,
-    const std::string& classId,
-    const std::string& selectedWhereKey,
-    const json& yearsJson,
-    const json& entry
-) {
-        const std::vector<int> whereYears = util::JsonToIntVector(yearsJson);
-
-        //ui_.PrintLine(OutputFormatter::BuildStatementText(savedStatement));
-        ui_.PrintLine("Распознанный объект: " + classId);
-        ui_.PrintLine("Выбранное место: " + selectedWhereKey);
-
-        PrintYearsBlock(savedStatement, whereYears);
-        PrintDetailedEntryInfo(entry);
-    }
-
-    std::string ExtractDescription(const json& entry) const {
-        if (!entry.contains("description")) {
-            return "отсутствует";
+        result.finalYears = util::IntersectIntVectors(result.yearsFromButtons, result.yearsFromRecognition);
+        if (result.finalYears.empty()) {
+            result.finalYears = util::MergeUniqueIntVectors(result.yearsFromButtons, result.yearsFromRecognition);
         }
 
-        if (entry.at("description").is_string()) {
-            return entry.at("description").get<std::string>();
+        result.size = ExtractStringField(entry, "size");
+        result.description = ExtractStringField(entry, "description");
+        result.possibleMilitaryRanks = ExtractStringVectorField(entry, "range");
+
+        for (const auto& item : prediction.top3) {
+            TopPrediction top;
+            top.classId = LabelByIndex(recognizer_.GetMeta(), item.first);
+            top.probability = item.second;
+            result.topPredictions.push_back(top);
         }
 
-        return entry.at("description").dump();
+        return result;
+    }
+
+    DecisionResult BuildResultWithoutRecognition(
+        const json& savedStatement,
+        const DialogContext& context
+    ) {
+        DecisionResult result;
+        result.recognitionUsed = false;
+        result.enteredRank = context.enteredRank;
+        result.yearsFromButtons = util::JsonToIntVector(savedStatement);
+        result.finalYears = result.yearsFromButtons;
+        return result;
     }
 
     std::string ExtractStringField(const json& entry, const std::string& key) const {
@@ -803,28 +839,12 @@ private:
         return value.dump();
     }
 
-    void PrintDetailedEntryInfo(const json& entry) {
-        ui_.PrintLine("Размер: " + ExtractStringField(entry, "size"));
-        ui_.PrintLine("Описание: " + ExtractStringField(entry, "description"));
-        ui_.PrintLine("Возможные воинские звания: " + ExtractStringField(entry, "range"));
-    }
-
-    void PrintYearsBlock(
-        const json& savedStatement,
-        const std::vector<int>& whereYears
-    ) {
-        const std::vector<int> statementYears = util::JsonToIntVector(savedStatement);
-        std::vector<int> intersection = util::IntersectIntVectors(statementYears, whereYears);
-
-        ui_.PrintLine("Годы, полученные из информации о пуговицах: " + util::JoinInts(statementYears));
-        ui_.PrintLine("Годы, полученные из описания распознанного изображения: " + util::JoinInts(whereYears));
-        if (intersection.empty())
-        {
-            std::copy(statementYears.begin(), statementYears.end(), std::back_inserter(intersection));
-            std::copy(whereYears.begin(), whereYears.end(), std::back_inserter(intersection));
-            std::sort(intersection.begin(), intersection.end());
+    std::vector<std::string> ExtractStringVectorField(const json& entry, const std::string& key) const {
+        if (!entry.contains(key)) {
+            return {};
         }
-        ui_.PrintLine("РЕШЕНИЕ: " + util::JoinInts(intersection));
+
+        return util::JsonToStringVector(entry.at(key));
     }
 
 private:
@@ -844,7 +864,7 @@ public:
         ValidateRoot();
     }
 
-    void Run() {
+    DecisionResult Run() {
         const json* currentNode = &treeRoot_;
 
         while (true) {
@@ -853,22 +873,25 @@ public:
             if (IsRecognitionLeafNode(*currentNode)) {
                 const json statement = ExtractStatement(*currentNode);
                 const std::string questionText = currentNode->at("question").get<std::string>();
-                recognitionSession_.Run(statement, questionText);
-                return;
+                return recognitionSession_.Run(statement, questionText, context_);
             }
 
             ui_.PrintLine(currentNode->at("question").get<std::string>());
             const std::string userInput = ui_.ReadLine("> ");
 
             const json& answers = currentNode->at("answers");
-            const auto resolvedKey = AnswerResolver::ResolveKey(answers, userInput);
+            const auto resolveResult = AnswerResolver::ResolveKey(answers, userInput);
 
-            if (!resolvedKey.has_value()) {
+            if (!resolveResult.resolvedKey.has_value()) {
                 ui_.PrintLine("Некорректный ответ. Попробуйте еще раз.");
                 continue;
             }
 
-            const json& next = answers.at(*resolvedKey);
+            if (resolveResult.enteredRank.has_value()) {
+                context_.enteredRank = resolveResult.enteredRank;
+            }
+
+            const json& next = answers.at(*resolveResult.resolvedKey);
 
             if (next.is_object()) {
                 currentNode = &next;
@@ -876,8 +899,7 @@ public:
             }
 
             if (next.is_string()) {
-                ExecuteCommand(next.get<std::string>(), *currentNode);
-                return;
+                return ExecuteCommand(next.get<std::string>(), *currentNode);
             }
 
             throw std::runtime_error(
@@ -903,17 +925,15 @@ private:
         }
     }
 
-    void ExecuteCommand(const std::string& command, const json& currentNode) {
+    DecisionResult ExecuteCommand(const std::string& command, const json& currentNode) {
         if (command == "RETURN_STATEMENT") {
-            PrintStatementOfNode(currentNode);
-            return;
+            return BuildStatementOnlyResult(currentNode);
         }
 
         if (command == "RECOGNITION_STATEMENT") {
             const json statement = ExtractStatement(currentNode);
             const std::string questionText = currentNode.at("question").get<std::string>();
-            recognitionSession_.Run(statement, questionText);
-            return;
+            return recognitionSession_.Run(statement, questionText, context_);
         }
 
         throw std::runtime_error("Неизвестная команда в answers: " + command);
@@ -926,8 +946,13 @@ private:
         return json::array();
     }
 
-    void PrintStatementOfNode(const json& node) {
-        ui_.PrintLine(OutputFormatter::BuildStatementText(ExtractStatement(node)));
+    DecisionResult BuildStatementOnlyResult(const json& node) {
+        DecisionResult result;
+        result.recognitionUsed = false;
+        result.enteredRank = context_.enteredRank;
+        result.yearsFromButtons = util::JsonToIntVector(ExtractStatement(node));
+        result.finalYears = result.yearsFromButtons;
+        return result;
     }
 
     static bool IsRecognitionLeafNode(const json& node) {
@@ -970,7 +995,49 @@ private:
     json treeRoot_;
     RecognitionSession recognitionSession_;
     ITextUI& ui_;
+    DialogContext context_;
 };
+
+// ------------------------ Вывод результата ------------------------
+
+void PrintDecisionResult(const DecisionResult& result, ITextUI& ui) {
+    if (result.enteredRank.has_value()) {
+        ui.PrintLine("Указанное пользователем звание: " + *result.enteredRank);
+    }
+
+    if (result.recognitionUsed) {
+        ui.PrintLine("Распознанный объект: " + result.recognizedObjectId);
+        ui.PrintLine("Выбранное место обнаружения: " + result.selectedWhere);
+    }
+
+    ui.PrintLine("Годы, полученные из информации о пуговицах: " + util::JoinInts(result.yearsFromButtons));
+
+    if (result.recognitionUsed) {
+        ui.PrintLine("Годы, полученные из описания распознанного изображения: " + util::JoinInts(result.yearsFromRecognition));
+    }
+
+    ui.PrintLine("РЕШЕНИЕ: " + util::JoinInts(result.finalYears));
+
+    if (result.recognitionUsed) {
+        ui.PrintLine("Размер распознанного предмета: " + result.size);
+        ui.PrintLine("Описание распознанного предмета: " + result.description);
+        ui.PrintLine("Возможные воинские звания для распознанного предмета: " + util::JoinStrings(result.possibleMilitaryRanks));
+
+        // if (!result.topPredictions.empty()) {
+        //     ui.PrintLine("Топ-3 наиболее вероятных класса:");
+        //     for (std::size_t i = 0; i < result.topPredictions.size(); ++i) {
+        //         std::ostringstream oss;
+        //         oss << "  #" << (i + 1) << ": "
+        //             << result.topPredictions[i].classId
+        //             << " ("
+        //             << std::fixed << std::setprecision(2)
+        //             << result.topPredictions[i].probability * 100.0f
+        //             << "%)";
+        //         ui.PrintLine(oss.str());
+        //     }
+        // }
+    }
+}
 
 // ------------------------ main ------------------------
 
@@ -996,7 +1063,9 @@ int main(int argc, char* argv[]) {
         ImageRecognizer recognizer(modelPath, classesPath);
         DecisionTreeEngine engine(questionsTree, catalog, recognizer, ui);
 
-        engine.Run();
+        const DecisionResult result = engine.Run();
+        PrintDecisionResult(result, ui);
+
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Ошибка: " << ex.what() << '\n';
