@@ -103,12 +103,15 @@ std::vector<std::string> JsonToStringVector(const json& value) {
     return result;
 }
 
-std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> right) {
-    std::sort(left.begin(), left.end());
-    std::sort(right.begin(), right.end());
+std::vector<int> NormalizeIntVector(std::vector<int> values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return values;
+}
 
-    left.erase(std::unique(left.begin(), left.end()), left.end());
-    right.erase(std::unique(right.begin(), right.end()), right.end());
+std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> right) {
+    left = NormalizeIntVector(std::move(left));
+    right = NormalizeIntVector(std::move(right));
 
     std::vector<int> result;
     std::set_intersection(
@@ -122,9 +125,7 @@ std::vector<int> IntersectIntVectors(std::vector<int> left, std::vector<int> rig
 
 std::vector<int> MergeUniqueIntVectors(std::vector<int> left, const std::vector<int>& right) {
     left.insert(left.end(), right.begin(), right.end());
-    std::sort(left.begin(), left.end());
-    left.erase(std::unique(left.begin(), left.end()), left.end());
-    return left;
+    return NormalizeIntVector(std::move(left));
 }
 
 std::string JoinInts(const std::vector<int>& values) {
@@ -172,11 +173,7 @@ struct DialogContext {
     std::optional<std::string> enteredRank;
 };
 
-struct DecisionResult {
-    bool recognitionUsed = false;
-
-    std::optional<std::string> enteredRank;
-
+struct ImageRecognitionResult {
     std::string imagePath;
     std::string recognizedObjectId;
     std::string selectedWhere;
@@ -190,6 +187,17 @@ struct DecisionResult {
     std::vector<std::string> possibleMilitaryRanks;
 
     std::vector<TopPrediction> topPredictions;
+};
+
+struct DecisionResult {
+    bool recognitionUsed = false;
+
+    std::optional<std::string> enteredRank;
+
+    std::vector<int> yearsFromButtons;
+    std::vector<ImageRecognitionResult> recognizedImages;
+
+    std::vector<int> finalYears;
 };
 
 // ------------------------ Интерфейс ввода/вывода ------------------------
@@ -666,6 +674,11 @@ public:
         const std::string& questionText,
         const DialogContext& context
     ) {
+        DecisionResult result;
+        result.recognitionUsed = false;
+        result.enteredRank = context.enteredRank;
+        result.yearsFromButtons = util::JsonToIntVector(savedStatement);
+
         ui_.PrintLine(questionText);
 
         while (true) {
@@ -673,7 +686,8 @@ public:
             const std::string normalized = util::Normalize(input);
 
             if (normalized == "quit") {
-                return BuildResultWithoutRecognition(savedStatement, context);
+                FinalizeDecisionResult(result);
+                return result;
             }
 
             if (input.empty()) {
@@ -682,18 +696,19 @@ public:
             }
 
             try {
-                const Pred prediction = recognizer_.Predict(input);
-                const std::string classId = recognizer_.GetTop1ClassId(prediction);
+                const ImageRecognitionResult imageResult = RecognizeSingleImage(
+                    savedStatement,
+                    input,
+                    context
+                );
 
-                if (!catalog_.HasId(classId)) {
-                    throw std::runtime_error(
-                        "Класс '" + classId + "' отсутствует в recognition.json. "
-                        "Проверьте соответствие class_names и ключей recognition.json."
-                    );
-                }
+                result.recognitionUsed = true;
+                result.recognizedImages.push_back(imageResult);
 
-                const json& entry = catalog_.GetById(classId);
-                return ProcessRecognitionResult(savedStatement, input, prediction, classId, entry, context);
+                ui_.PrintLine("Изображение обработано.");
+                ui_.PrintLine("Локальный результат по этому изображению: " + util::JoinInts(imageResult.finalYears));
+                ui_.PrintLine("Введите путь к следующему изображению или QUIT для завершения.");
+
             } catch (const std::exception& ex) {
                 ui_.PrintLine(std::string("Ошибка распознавания: ") + ex.what());
                 ui_.PrintLine("Попробуйте снова ввести корректный путь к изображению или QUIT.");
@@ -702,7 +717,26 @@ public:
     }
 
 private:
-    DecisionResult ProcessRecognitionResult(
+    ImageRecognitionResult RecognizeSingleImage(
+        const json& savedStatement,
+        const std::string& imagePath,
+        const DialogContext& context
+    ) {
+        const Pred prediction = recognizer_.Predict(imagePath);
+        const std::string classId = recognizer_.GetTop1ClassId(prediction);
+
+        if (!catalog_.HasId(classId)) {
+            throw std::runtime_error(
+                "Класс '" + classId + "' отсутствует в recognition.json. "
+                "Проверьте соответствие class_names и ключей recognition.json."
+            );
+        }
+
+        const json& entry = catalog_.GetById(classId);
+        return ProcessRecognitionResult(savedStatement, imagePath, prediction, classId, entry, context);
+    }
+
+    ImageRecognitionResult ProcessRecognitionResult(
         const json& savedStatement,
         const std::string& imagePath,
         const Pred& prediction,
@@ -710,6 +744,8 @@ private:
         const json& entry,
         const DialogContext& context
     ) {
+        (void)context;
+
         if (!entry.contains("where") || !entry.at("where").is_object()) {
             throw std::runtime_error("В recognition.json у объекта '" + classId + "' отсутствует корректный раздел where.");
         }
@@ -725,8 +761,7 @@ private:
                 classId,
                 it.key(),
                 it.value(),
-                entry,
-                context
+                entry
             );
         }
 
@@ -756,25 +791,21 @@ private:
                 classId,
                 *resolvedKey,
                 where.at(*resolvedKey),
-                entry,
-                context
+                entry
             );
         }
     }
 
-    DecisionResult BuildRecognitionResult(
+    ImageRecognitionResult BuildRecognitionResult(
         const json& savedStatement,
         const std::string& imagePath,
         const Pred& prediction,
         const std::string& classId,
         const std::string& whereKey,
         const json& yearsJson,
-        const json& entry,
-        const DialogContext& context
+        const json& entry
     ) {
-        DecisionResult result;
-        result.recognitionUsed = true;
-        result.enteredRank = context.enteredRank;
+        ImageRecognitionResult result;
         result.imagePath = imagePath;
         result.recognizedObjectId = classId;
         result.selectedWhere = whereKey;
@@ -801,16 +832,27 @@ private:
         return result;
     }
 
-    DecisionResult BuildResultWithoutRecognition(
-        const json& savedStatement,
-        const DialogContext& context
-    ) {
-        DecisionResult result;
-        result.recognitionUsed = false;
-        result.enteredRank = context.enteredRank;
-        result.yearsFromButtons = util::JsonToIntVector(savedStatement);
-        result.finalYears = result.yearsFromButtons;
-        return result;
+    void FinalizeDecisionResult(DecisionResult& result) const {
+        result.yearsFromButtons = util::NormalizeIntVector(result.yearsFromButtons);
+
+        if (result.recognizedImages.empty()) {
+            result.finalYears = result.yearsFromButtons;
+            return;
+        }
+
+        std::vector<int> intersection = result.yearsFromButtons;
+        std::vector<int> unionYears = result.yearsFromButtons;
+
+        for (const auto& imageResult : result.recognizedImages) {
+            intersection = util::IntersectIntVectors(intersection, imageResult.yearsFromRecognition);
+            unionYears = util::MergeUniqueIntVectors(unionYears, imageResult.yearsFromRecognition);
+        }
+
+        if (!intersection.empty()) {
+            result.finalYears = intersection;
+        } else {
+            result.finalYears = unionYears;
+        }
     }
 
     std::string ExtractStringField(const json& entry, const std::string& key) const {
@@ -951,7 +993,7 @@ private:
         result.recognitionUsed = false;
         result.enteredRank = context_.enteredRank;
         result.yearsFromButtons = util::JsonToIntVector(ExtractStatement(node));
-        result.finalYears = result.yearsFromButtons;
+        result.finalYears = util::NormalizeIntVector(result.yearsFromButtons);
         return result;
     }
 
@@ -1005,38 +1047,46 @@ void PrintDecisionResult(const DecisionResult& result, ITextUI& ui) {
         ui.PrintLine("Указанное пользователем звание: " + *result.enteredRank);
     }
 
-    if (result.recognitionUsed) {
-        ui.PrintLine("Распознанный объект: " + result.recognizedObjectId);
-        ui.PrintLine("Выбранное место обнаружения: " + result.selectedWhere);
-    }
-
     ui.PrintLine("Годы, полученные из информации о пуговицах: " + util::JoinInts(result.yearsFromButtons));
 
     if (result.recognitionUsed) {
-        ui.PrintLine("Годы, полученные из описания распознанного изображения: " + util::JoinInts(result.yearsFromRecognition));
+        ui.PrintLine("Количество распознанных изображений: " + std::to_string(result.recognizedImages.size()));
+
+        for (std::size_t i = 0; i < result.recognizedImages.size(); ++i) {
+            const auto& image = result.recognizedImages[i];
+
+            ui.PrintLine("----------------------------------------");
+            ui.PrintLine("Изображение #" + std::to_string(i + 1));
+            ui.PrintLine("Путь к изображению: " + image.imagePath);
+            ui.PrintLine("Распознанный объект: " + image.recognizedObjectId);
+            ui.PrintLine("Выбранное место обнаружения: " + image.selectedWhere);
+            ui.PrintLine("Годы, полученные из информации о пуговицах: " + util::JoinInts(image.yearsFromButtons));
+            ui.PrintLine("Годы, полученные из описания распознанного изображения: " + util::JoinInts(image.yearsFromRecognition));
+            ui.PrintLine("Локальный результат по изображению: " + util::JoinInts(image.finalYears));
+            ui.PrintLine("Размер распознанного предмета: " + image.size);
+            ui.PrintLine("Описание распознанного предмета: " + image.description);
+            ui.PrintLine("Возможные воинские звания для распознанного предмета: " + util::JoinStrings(image.possibleMilitaryRanks));
+
+            // Если нужно вернуть вывод top-3, можно раскомментировать:
+            // if (!image.topPredictions.empty()) {
+            //     ui.PrintLine("Топ-3 наиболее вероятных класса:");
+            //     for (std::size_t j = 0; j < image.topPredictions.size(); ++j) {
+            //         std::ostringstream oss;
+            //         oss << "  #" << (j + 1) << ": "
+            //             << image.topPredictions[j].classId
+            //             << " ("
+            //             << std::fixed << std::setprecision(2)
+            //             << image.topPredictions[j].probability * 100.0f
+            //             << "%)";
+            //         ui.PrintLine(oss.str());
+            //     }
+            // }
+        }
+
+        ui.PrintLine("----------------------------------------");
     }
 
-    ui.PrintLine("РЕШЕНИЕ: " + util::JoinInts(result.finalYears));
-
-    if (result.recognitionUsed) {
-        ui.PrintLine("Размер распознанного предмета: " + result.size);
-        ui.PrintLine("Описание распознанного предмета: " + result.description);
-        ui.PrintLine("Возможные воинские звания для распознанного предмета: " + util::JoinStrings(result.possibleMilitaryRanks));
-
-        // if (!result.topPredictions.empty()) {
-        //     ui.PrintLine("Топ-3 наиболее вероятных класса:");
-        //     for (std::size_t i = 0; i < result.topPredictions.size(); ++i) {
-        //         std::ostringstream oss;
-        //         oss << "  #" << (i + 1) << ": "
-        //             << result.topPredictions[i].classId
-        //             << " ("
-        //             << std::fixed << std::setprecision(2)
-        //             << result.topPredictions[i].probability * 100.0f
-        //             << "%)";
-        //         ui.PrintLine(oss.str());
-        //     }
-        // }
-    }
+    ui.PrintLine("ИТОГОВОЕ РЕШЕНИЕ ПО ВСЕМ ПУГОВИЦАМ И ИЗОБРАЖЕНИЯМ: " + util::JoinInts(result.finalYears));
 }
 
 // ------------------------ main ------------------------
